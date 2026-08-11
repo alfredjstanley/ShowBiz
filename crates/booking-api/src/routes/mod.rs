@@ -5,6 +5,7 @@
 
 pub mod booking;
 pub mod health;
+pub mod webhooks;
 
 use axum::routing::{get, post};
 use axum::Router;
@@ -15,6 +16,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health::health))
         .route("/bookings", post(booking::create))
+        .route("/webhooks/payments", post(webhooks::payments))
         // Your routes go here. For example:
         //
         //   .route("/shows", get(shows::list))

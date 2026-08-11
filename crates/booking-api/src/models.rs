@@ -65,3 +65,20 @@ pub struct BookingResponse {
     pub status: BookingStatus,
     pub transaction_id: Option<String>,
 }
+
+/// POST `/webhooks/payments`
+#[derive(Debug, Deserialize)]
+pub struct PaymentWebhookPayload {
+    pub event_id: String,
+    pub transaction_id: String,
+    #[allow(dead_code)]
+    pub booking_reference: String,
+    pub status: WebhookPaymentStatus,
+}
+ 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum WebhookPaymentStatus {
+    Success,
+    Failed,
+}
