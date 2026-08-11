@@ -31,10 +31,27 @@ impl std::str::FromStr for BookingStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeatStatus {
+    Held,
+    Confirmed,
+    Released,
+}
+
+impl SeatStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SeatStatus::Held => "HELD",
+            SeatStatus::Confirmed => "CONFIRMED",
+            SeatStatus::Released => "RELEASED",
+        }
+    }
+}
 /// POST /bookings request body
 #[derive(Serialize, Deserialize)]
 pub struct CreateBookingRequest {
     pub show_id: i64,
+    pub seat_ids: Vec<String>,
 }
 
 /// POST /bookings response body
@@ -42,5 +59,6 @@ pub struct CreateBookingRequest {
 pub struct BookingResponse {
     pub id: String,
     pub show_id: i64,
+    pub seat_ids: Vec<String>,
     pub status: BookingStatus,
 }
