@@ -22,7 +22,7 @@ pub async fn payments(
     State(state): State<AppState>,
     Json(payload): Json<PaymentWebhookPayload>,
 ) -> AppResult<Json<serde_json::Value>> {
-    // Check does a booking with this transaction_id exist yet? 
+    // Check does a booking with this transaction_id exist yet?
     let booking: Option<(String,)> =
         sqlx::query_as("SELECT id FROM bookings WHERE transaction_id = ?")
             .bind(&payload.transaction_id)
@@ -38,7 +38,7 @@ pub async fn payments(
 
     // Claim this event. If the INSERT fails on the PRIMARY KEY, someone (maybe
     // this exact handler, running concurrently for the duplicate delivery) already
-    // claimed it — do nothing further, but still return 200 otherwise the gateway 
+    // claimed it — do nothing further, but still return 200 otherwise the gateway
     // retries this "duplicate" forever.
     let claim = sqlx::query("INSERT INTO payment_events (event_id) VALUES (?)")
         .bind(&payload.event_id)
@@ -62,9 +62,10 @@ pub async fn payments(
         WebhookPaymentStatus::Failed => (BookingStatus::Failed, SeatStatus::Released),
     };
 
-    sqlx::query("UPDATE bookings SET status = ? WHERE id = ?")
+    sqlx::query("UPDATE bookings SET status = ? WHERE id = ? AND status = ?")
         .bind(booking_status.as_str())
         .bind(&booking_id)
+        .bind(BookingStatus::Pending.as_str())
         .execute(&mut *tx)
         .await?;
 

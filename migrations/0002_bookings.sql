@@ -31,3 +31,9 @@ ALTER TABLE bookings ADD COLUMN transaction_id TEXT;
 
 ALTER TABLE bookings ADD COLUMN amount_minor INTEGER;
 ALTER TABLE bookings ADD COLUMN currency TEXT;
+
+-- One row per webhook event we have ever acted on
+CREATE TABLE payment_events (
+    event_id    TEXT PRIMARY KEY,
+    received_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+) STRICT;
