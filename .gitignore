@@ -1,0 +1,8 @@
+/target
+/data/*.db
+/data/*.db-wal
+/data/*.db-shm
+.env
+.DS_Store
+.remember/
+README.md

@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = ["crates/booking-api", "crates/payment-gateway"]
+
+[workspace.package]
+edition = "2021"
+# The dependencies here only need 1.85, but the floor is deliberately set at current stable.
+#
+# Reason: rust-analyzer executes proc macros through an internal ABI that is NOT stable
+# across rustc releases. A compiler much older than the editor's rust-analyzer cannot load
+# the proc-macro dylibs cargo produced, every worker dies, and the editor reports
+# "proc-macro panicked: all proc-macro server workers have exited" on every derive in every
+# file — while `cargo build` succeeds, which makes it thoroughly confusing to diagnose.
+#
+# Cargo refusing to build with a clear "requires rustc 1.97" message is a far better failure
+# than a silently broken IDE five minutes into a timed interview.
+rust-version = "1.97"
+publish = false
+
+[workspace.dependencies]
+axum = "0.8.9"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync"] }
+sqlx = { version = "0.8.6", default-features = false, features = [
+    "runtime-tokio",
+    "sqlite",
+    "macros",
+    "migrate",
+    "chrono",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# HTTP/1 + JSON only: no TLS, no proxy detection, no charset decoding. Everything in this
+# exercise talks to 127.0.0.1 over plain HTTP, and dropping `default-tls` keeps rustls and
+# aws-lc-rs out of a cold build entirely. Add features back if you ever need https.
+reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
+
+[profile.dev]
+# Interview sessions are compile-bound, not run-bound. Skipping debuginfo is the single
+# biggest lever on incremental link time; keep it unless you need a real debugger.
+debug = 0
