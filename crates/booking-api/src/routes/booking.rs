@@ -1,8 +1,12 @@
 use axum::{extract::State, Json};
 use sqlx::error::ErrorKind;
+use sqlx::{QueryBuilder, Sqlite};
 use uuid::Uuid;
 
+use std::collections::HashSet;
+
 use crate::error::{AppError, AppResult};
+use crate::gateway;
 use crate::models::{BookingResponse, BookingStatus, CreateBookingRequest, SeatStatus};
 use crate::state::AppState;
 
@@ -21,7 +25,8 @@ pub async fn create(
     //   Some((0,))  -> show exists and hasn't started
     //   Some((1,))  -> show exists and has started
     //   None        -> show doesn't exist
-    let exists: Option<(i64,)> = sqlx::query_as(
+
+    let show: Option<(i64, String, i64)> = sqlx::query_as(
         // Ask SQLite whether the show's start time is <= the current time.
         //
         // `starts_at <= ...` produces a boolean-like value in SQLite:
@@ -32,10 +37,10 @@ pub async fn create(
         //
         // `AS already_started` gives the resulting column a name.
         //
-        // `WHERE id = ?` means:
-        // "Only look for the show whose ID we'll provide with `.bind(...)`."
-        "SELECT (starts_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) AS already_started \
-         FROM shows WHERE id = ?",
+        // price_multiplier_bp and currency: needed to price the seats below.
+        "SELECT price_multiplier_bp, currency, \
+            (starts_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) AS already_started \
+     FROM shows WHERE id = ?",
     )
     .bind(req.show_id)
     // Execute the query and return either:
@@ -44,30 +49,10 @@ pub async fn create(
     .fetch_optional(&state.pool)
     .await?;
 
-    // `exists` is currently:
-    //
-    //     Option<(i64,)>
-    //
-    // `ok_or_else(...)` converts that Option into a Result:
-    //
-    //     Some((0,)) -> Ok((0,))
-    //     Some((1,)) -> Ok((1,))
-    //     None       -> Err(AppError::Validation(...))
-    //
-    let (already_started,) =
-        exists.ok_or_else(|| AppError::Validation(format!("unknown show {}", req.show_id)))?;
+    let (price_multiplier_bp, currency, already_started) =
+        show.ok_or_else(|| AppError::Validation(format!("unknown show {}", req.show_id)))?;
+  
 
-    // `(already_started,)` destructures the one-element tuple.
-    //
-    // For example:
-    //
-    //     (1,) -> already_started = 1
-    //     (0,) -> already_started = 0
-    //
-    // After this line, `already_started` is simply an `i64`.
-
-    // SQLite represents false as 0 and true as 1.
-    //
     if already_started != 0 {
         // Reject the booking because the show has already started.
         return Err(AppError::Validation(format!(
@@ -79,6 +64,35 @@ pub async fn create(
         )));
     }
 
+    // QueryBuilder, since sqlx can't bind a Vec directly.
+    let mut qb: QueryBuilder<Sqlite> =
+        QueryBuilder::new("SELECT id, price_minor FROM seats WHERE id IN (");
+
+    let mut seperated = qb.separated(", ");
+    for seat_id in &req.seat_ids {
+        seperated.push_bind(seat_id);
+    }
+    seperated.push_unseparated(")");
+
+    let priced_seats: Vec<(String, i64)> = qb.build_query_as().fetch_all(&state.pool).await?;
+
+    if priced_seats.len() != req.seat_ids.len() {
+        let found: HashSet<&str> = priced_seats.iter().map(|(id, _)| id.as_str()).collect();
+        let unknown: Vec<&str> = req
+            .seat_ids
+            .iter()
+            .map(String::as_str)
+            .filter(|id| !found.contains(id))
+            .collect();
+        return Err(AppError::Validation(format!(
+            "unknown seat id(s): {}",
+            unknown.join(", ")
+        )));
+    }
+
+    let seats_total: i64 = priced_seats.iter().map(|(_, price)| price).sum();
+    let amount_minor = seats_total * price_multiplier_bp / 10_000;
+
     let booking_id = Uuid::new_v4().to_string();
 
     // One transaction: the booking row and every seat hold succeed together, or none of
@@ -86,12 +100,17 @@ pub async fn create(
     // which rolls back the booking row AND seats
     let mut tx = state.pool.begin().await?;
 
-    sqlx::query("INSERT INTO bookings (id, show_id, status) VALUES (?, ?, ?)")
-        .bind(&booking_id)
-        .bind(req.show_id)
-        .bind(BookingStatus::Pending.as_str())
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "INSERT INTO bookings (id, show_id, status, amount_minor, currency) \
+        VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&booking_id)
+    .bind(req.show_id)
+    .bind(BookingStatus::Pending.as_str())
+    .bind(amount_minor)
+    .bind(&currency)
+    .execute(&mut *tx)
+    .await?;
 
     for seat_id in &req.seat_ids {
         let result = sqlx::query(
@@ -99,7 +118,7 @@ pub async fn create(
         )
         .bind(&booking_id)
         .bind(req.show_id)
-            .bind(seat_id)
+        .bind(seat_id)
         .bind(SeatStatus::Held.as_str())
         .execute(&mut *tx)
         .await;
@@ -119,10 +138,44 @@ pub async fn create(
 
     tx.commit().await?;
 
-    Ok(Json(BookingResponse {
-        id: booking_id,
-        show_id: req.show_id,
-        seat_ids: req.seat_ids,
-        status: BookingStatus::Pending,
-    }))
+    match gateway::create_payment(&state, &booking_id, amount_minor, &currency).await {
+        Ok(payment) => {
+            sqlx::query("UPDATE bookings SET transaction_id = ? WHERE id = ?")
+                .bind(&payment.transaction_id)
+                .bind(&booking_id)
+                .execute(&state.pool)
+                .await?;
+
+            Ok(Json(BookingResponse {
+                id: booking_id,
+                show_id: req.show_id,
+                seat_ids: req.seat_ids,
+                amount_minor,
+                currency,
+                status: BookingStatus::Pending,
+                transaction_id: Some(payment.transaction_id),
+            }))
+        }
+
+        Err(err) => {
+            // Gateway unreachable / rejected: release what we just held
+            let mut tx = state.pool.begin().await?;
+
+            sqlx::query("UPDATE bookings SET status = ? WHERE id = ?")
+                .bind(BookingStatus::Failed.as_str())
+                .bind(&booking_id)
+                .execute(&mut *tx)
+                .await?;
+
+            sqlx::query("UPDATE booking_seats SET status = ? WHERE booking_id = ? AND status = ?")
+                .bind(SeatStatus::Released.as_str())
+                .bind(&booking_id)
+                .bind(SeatStatus::Held.as_str())
+                .execute(&mut *tx)
+                .await?;
+
+            tx.commit().await?;
+            Err(err)
+        }
+    }
 }

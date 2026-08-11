@@ -60,5 +60,8 @@ pub struct BookingResponse {
     pub id: String,
     pub show_id: i64,
     pub seat_ids: Vec<String>,
+    pub amount_minor: i64,
+    pub currency: String,
     pub status: BookingStatus,
+    pub transaction_id: Option<String>,
 }

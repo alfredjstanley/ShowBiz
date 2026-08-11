@@ -8,9 +8,10 @@
 mod config;
 mod db;
 mod error;
+mod gateway;
+mod models;
 mod routes;
 mod state;
-mod models;
 
 use std::net::{Ipv4Addr, SocketAddr};
 

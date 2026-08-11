@@ -20,3 +20,14 @@ CREATE TABLE booking_seats (
 CREATE UNIQUE INDEX idx_active_seat_hold
 ON booking_seats (show_id, seat_id)
 WHERE status IN ('HELD', 'CONFIRMED');
+
+-- The payment gateway hands back a transaction_id once a payment is started.
+
+ALTER TABLE bookings ADD COLUMN transaction_id TEXT;
+
+
+-- The price actually charged 
+-- sum of seat prices × the show's multiplier
+
+ALTER TABLE bookings ADD COLUMN amount_minor INTEGER;
+ALTER TABLE bookings ADD COLUMN currency TEXT;
