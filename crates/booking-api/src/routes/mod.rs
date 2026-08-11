@@ -3,9 +3,10 @@
 //! Add your routes here. Only the webhook path is fixed, because the gateway calls it;
 //! everything else is yours to design. See `README.md`.
 
+pub mod booking;
 pub mod health;
 
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 
 use crate::state::AppState;
@@ -13,6 +14,7 @@ use crate::state::AppState;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health::health))
+        .route("/bookings", post(booking::create))
         // Your routes go here. For example:
         //
         //   .route("/shows", get(shows::list))

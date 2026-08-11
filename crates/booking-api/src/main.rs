@@ -10,6 +10,7 @@ mod db;
 mod error;
 mod routes;
 mod state;
+mod models;
 
 use std::net::{Ipv4Addr, SocketAddr};
 
